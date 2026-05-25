@@ -1,0 +1,40 @@
+{
+  "name": "opslab",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local DevOps console — manage custom commands, run on local shell or SSH, with built-in AI assistance (Claude / OpenAI / Ollama).",
+  "license": "MIT",
+  "author": "wenglin",
+  "homepage": "https://github.com/wl9724/opslab#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wl9724/opslab.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wl9724/opslab/issues"
+  },
+  "keywords": [
+    "devops",
+    "terminal",
+    "ssh",
+    "command-runner",
+    "ai",
+    "claude",
+    "openai",
+    "ollama",
+    "playbook",
+    "self-hosted"
+  ],
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c blue,magenta \"npm:dev -w server\" \"npm:dev -w client\"",
+    "build": "npm run build -w server && npm run build -w client",
+    "start": "node server/dist/index.js"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
