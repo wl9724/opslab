@@ -7,6 +7,7 @@ export interface TerminalHandle {
   writeln: (data: string) => void;
   clear: () => void;
   fit: () => void;
+  focus: () => void;
   getAllText: () => string;
   getSelection: () => string;
 }
@@ -14,6 +15,12 @@ export interface TerminalHandle {
 interface Props {
   hideToolbar?: boolean;
   downloadName?: string;
+  /** Enable stdin: wire keystrokes to `onData` and report viewport size via `onResize`. */
+  interactive?: boolean;
+  /** Keystrokes / pasted text typed into the terminal (interactive mode only). */
+  onData?: (data: string) => void;
+  /** Fires after fit when the viewport size changes (interactive mode only). */
+  onResize?: (cols: number, rows: number) => void;
 }
 
 async function writeClipboard(text: string): Promise<boolean> {
@@ -39,11 +46,18 @@ async function writeClipboard(text: string): Promise<boolean> {
   }
 }
 
-export const TerminalView = forwardRef<TerminalHandle, Props>(({ hideToolbar, downloadName }, ref) => {
+export const TerminalView = forwardRef<TerminalHandle, Props>(({ hideToolbar, downloadName, interactive, onData, onResize }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  // Keep latest callbacks in refs so the init effect (which builds the xterm instance once)
+  // doesn't need them as deps — parents pass inline arrows with a new identity every render.
+  const onDataRef = useRef(onData);
+  const onResizeRef = useRef(onResize);
+  useEffect(() => { onDataRef.current = onData; }, [onData]);
+  useEffect(() => { onResizeRef.current = onResize; }, [onResize]);
 
   const flash = useCallback((msg: string) => {
     setToast(msg);
@@ -74,9 +88,10 @@ export const TerminalView = forwardRef<TerminalHandle, Props>(({ hideToolbar, do
         white: '#e2e8f0',
         brightWhite: '#f8fafc',
       },
-      convertEol: true,
+      convertEol: !interactive,
       scrollback: 10000,
-      disableStdin: true,
+      disableStdin: !interactive,
+      cursorBlink: !!interactive,
       rightClickSelectsWord: true,
       macOptionClickForcesSelection: true,
     });
@@ -84,30 +99,57 @@ export const TerminalView = forwardRef<TerminalHandle, Props>(({ hideToolbar, do
     term.loadAddon(fit);
     term.open(containerRef.current);
 
-    term.attachCustomKeyEventHandler((e) => {
-      if (e.type !== 'keydown') return true;
-      const mod = e.ctrlKey || e.metaKey;
-      if (!mod) return true;
-      const key = e.key.toLowerCase();
-      if (key === 'c' && term.hasSelection()) {
-        e.preventDefault();
-        writeClipboard(term.getSelection()).then((ok) => ok && flash('已复制'));
-        return false;
-      }
-      if (key === 'a' && !e.shiftKey) {
-        e.preventDefault();
-        term.selectAll();
-        return false;
-      }
-      if (key === 'l') {
-        e.preventDefault();
-        term.clear();
-        return false;
-      }
-      return true;
-    });
+    if (interactive) {
+      // Interactive shell: clipboard goes through the explicit Ctrl/Cmd+Shift shortcuts
+      // (matching gnome-terminal); everything else — including a bare Ctrl+C (SIGINT),
+      // Ctrl+A, Ctrl+L — must reach the PTY untouched.
+      term.attachCustomKeyEventHandler((e) => {
+        if (e.type !== 'keydown') return true;
+        const key = e.key.toLowerCase();
+        const copyCombo = e.metaKey || (e.ctrlKey && e.shiftKey);
+        if (key === 'c' && copyCombo && term.hasSelection()) {
+          e.preventDefault();
+          writeClipboard(term.getSelection()).then((ok) => ok && flash('已复制'));
+          return false;
+        }
+        if (key === 'v' && (e.metaKey || (e.ctrlKey && e.shiftKey))) {
+          e.preventDefault();
+          navigator.clipboard?.readText?.()
+            .then((text) => { if (text) onDataRef.current?.(text); })
+            .catch(() => {});
+          return false;
+        }
+        return true;
+      });
+      term.onData((d) => onDataRef.current?.(d));
+    } else {
+      term.attachCustomKeyEventHandler((e) => {
+        if (e.type !== 'keydown') return true;
+        const mod = e.ctrlKey || e.metaKey;
+        if (!mod) return true;
+        const key = e.key.toLowerCase();
+        if (key === 'c' && term.hasSelection()) {
+          e.preventDefault();
+          writeClipboard(term.getSelection()).then((ok) => ok && flash('已复制'));
+          return false;
+        }
+        if (key === 'a' && !e.shiftKey) {
+          e.preventDefault();
+          term.selectAll();
+          return false;
+        }
+        if (key === 'l') {
+          e.preventDefault();
+          term.clear();
+          return false;
+        }
+        return true;
+      });
+    }
 
     // Multiple fit attempts to handle: initial layout, late web-fonts, parent visibility toggles
+    let lastCols = 0;
+    let lastRows = 0;
     const safeFit = () => {
       try {
         const el = containerRef.current;
@@ -115,6 +157,11 @@ export const TerminalView = forwardRef<TerminalHandle, Props>(({ hideToolbar, do
         const rect = el.getBoundingClientRect();
         if (rect.width < 10 || rect.height < 10) return;  // skip when hidden / sized to nothing
         fit.fit();
+        if (interactive && (term.cols !== lastCols || term.rows !== lastRows)) {
+          lastCols = term.cols;
+          lastRows = term.rows;
+          onResizeRef.current?.(term.cols, term.rows);
+        }
       } catch { /* swallow */ }
     };
 
@@ -144,7 +191,7 @@ export const TerminalView = forwardRef<TerminalHandle, Props>(({ hideToolbar, do
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [flash]);
+  }, [flash, interactive]);
 
   const copySelection = useCallback(async () => {
     const sel = termRef.current?.getSelection() ?? '';
@@ -191,6 +238,7 @@ export const TerminalView = forwardRef<TerminalHandle, Props>(({ hideToolbar, do
     writeln: (data) => termRef.current?.writeln(data),
     clear: () => termRef.current?.clear(),
     fit: () => fitRef.current?.fit(),
+    focus: () => termRef.current?.focus(),
     getAllText: collectAll,
     getSelection: () => termRef.current?.getSelection() ?? '',
   }));

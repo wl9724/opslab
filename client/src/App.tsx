@@ -3,6 +3,7 @@ import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import { Dashboard } from './pages/Dashboard';
 import { CommandEditor } from './pages/CommandEditor';
 import { Runner } from './pages/Runner';
+import { WebTerminal } from './pages/WebTerminal';
 import { Connections } from './pages/Connections';
 import { History } from './pages/History';
 import { Settings } from './pages/Settings';
@@ -14,6 +15,7 @@ import { useStore } from './lib/store';
 const NAV = [
   { to: '/', label: '命令', icon: '⌘' },
   { to: '/run', label: '终端', icon: '▶' },
+  { to: '/terminal', label: 'Shell', icon: '⌨' },
   { to: '/playbooks', label: 'Playbook', icon: '⛓' },
   { to: '/connections', label: '连接', icon: '⇄' },
   { to: '/history', label: '历史', icon: '⌛' },
@@ -74,6 +76,7 @@ export function App() {
             <Route path="/commands/:id" element={<CommandEditor />} />
             <Route path="/run/:commandId" element={<Runner />} />
             <Route path="/run" element={<Runner />} />
+            <Route path="/terminal" element={<WebTerminal />} />
             <Route path="/playbooks" element={<Playbooks />} />
             <Route path="/playbooks/new" element={<PlaybookEditor />} />
             <Route path="/playbooks/:id" element={<PlaybookEditor />} />
