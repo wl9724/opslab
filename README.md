@@ -20,6 +20,7 @@ Node Local Server (Express + Socket.IO)
 - **命令 or 脚本**：单条命令走系统 shell；选择 bash/python/node/powershell/ruby/perl 等解释器即可直接写多行脚本（Monaco 编辑器自动切语言高亮、变大；支持从 .sh/.py/.ps1 文件导入）
 - 实时输出：xterm.js 渲染 ANSI 颜色
 - 多目标：本地 PowerShell/Bash、SSH 远程、Docker、K8s 模板
+- **交互式 Shell（Web Terminal）**：左侧 `⌨ Shell` 进真·PTY 终端，可跑 `vim` / `top` / `ssh` 等交互程序，支持窗口大小自适应、多标签、本地 + SSH 远程。本地用 node-pty（可选原生模块），远程用 SSH shell 通道
 - **一次执行多条命令**，三种姿势：
   - 单条命令里的 shell 串联：`cmd1 && cmd2 ; cmd3 | grep ...`
   - **多标签终端**：终端页顶部 `+` 开新会话，每个 tab 独立执行不同命令
@@ -33,7 +34,7 @@ Node Local Server (Express + Socket.IO)
 
 - Node.js 18+ （推荐 20 或 22）
 - 操作系统：Windows / macOS / Linux 均可
-- 仅一个原生模块（`better-sqlite3`），大部分平台直接装 prebuilt；如果不走 prebuilt，需要 Python + C++ 工具链
+- 原生模块：`better-sqlite3`（必需）；`node-pty`（可选，仅本地 Web Terminal 需要）。大部分平台直接装 prebuilt；如果不走 prebuilt，需要 Python + C++ 工具链
 
 ## 安装
 
@@ -170,12 +171,29 @@ ps aux | grep node | head -5        # 管道
 
 执行后第 2 步的命令会变成 `kubectl --context prod-cluster get pods`。
 
+## Web Terminal（交互式 Shell）
+
+命令模板和 Playbook 是"跑一条、看输出"；如果你想要一个**真正可交互的 shell**（跑 `vim`、`top`、`htop`、`ssh`、回答 `sudo` 密码提示、用上下键翻历史……），用左侧 **`⌨ Shell`** 页。
+
+- **本地或远程**：顶部"连接"下拉切本地 shell / 任意 SSH 连接（切换会重开会话）
+- **真 PTY**：本地走 [`node-pty`](https://github.com/microsoft/node-pty)，远程走 SSH 的 shell 通道；窗口大小随浏览器自适应（`resize`），程序看到的是一个正常 TTY
+- **多标签**：顶部 `+` 开多个独立会话，标签上的状态点表示 连接中 / 已连接 / 已断开
+- **复制粘贴**：选中即可用 `Ctrl/Cmd+Shift+C` 复制、`Ctrl/Cmd+Shift+V` 粘贴；裸 `Ctrl+C` 直接发给 shell（SIGINT），不会被前端拦截
+- 与命令模板不同，这里**保留**你的 rc/profile、别名、彩色提示符——它就是个完整的登录 shell
+
+> **本地终端需要 node-pty**：它是可选原生模块。没装时本地终端会提示安装命令，但 **SSH 终端不依赖它，开箱即用**。在你实际运行服务端的环境里装（WSL 用户在 WSL 里装）：
+> ```bash
+> npm install node-pty -w server   # 然后重启服务
+> ```
+> 大多数平台有 prebuilt，无需编译。
+
 ## 安全说明
 
 - 默认只听 `127.0.0.1`，本机其他用户/程序也需 token 才能调
-- 高危命令拦截清单见 `server/src/executors/safety.ts`，可自行扩展
+- 高危命令拦截清单见 `server/src/executors/safety.ts`，可自行扩展（仅作用于命令模板执行）
 - AI 生成的命令 **永远** 不自动执行：必须点"执行"按钮
 - SSH 密码/私钥、AI key 全部 AES-256-GCM 加密，不落明文
+- **Web Terminal 是完整的交互式 shell**，不套高危命令拦截（无法对交互输入做有意义的解析）；它的权限与"终端"页执行命令一致，同样靠 `127.0.0.1` + token 保护。会话是临时的：关闭标签 / 断线即销毁服务端 PTY
 
 ## 项目结构
 
@@ -188,11 +206,11 @@ opslab/
 │       ├── secrets.ts     # 加密
 │       ├── seed.ts        # 内置命令模板
 │       ├── routes/        # REST 路由
-│       ├── executors/     # local / ssh / runner / template / safety
+│       ├── executors/     # local / ssh / runner / pty (Web Terminal) / template / safety
 │       └── ai/            # claude / openai / ollama adapters
 ├── client/                # React + Vite + Tailwind
 │   └── src/
-│       ├── pages/
+│       ├── pages/         # …Runner, WebTerminal, Playbooks, Connections …
 │       ├── components/    # TerminalView, VariableForm, AIAssistPanel
 │       └── lib/           # api / socket / store / types
 └── data/                  # 用户数据 (不入 git)
@@ -208,6 +226,5 @@ opslab/
 ## 后续可加
 
 - Sessions 持久化跨刷新（当前刷新会清屏，但执行记录都在历史里）
-- 多步骤 playbook（命令串联）
 - 团队共享（导出/导入命令包）
-- Web Terminal（真 PTY 交互，需上 node-pty）
+- Web Terminal 会话持久化 / 断线自动重连（当前断线后点"重新连接"）

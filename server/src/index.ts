@@ -15,7 +15,8 @@ import { aiRouter } from './routes/ai.js';
 import { playbooksRouter } from './routes/playbooks.js';
 import { subscribe } from './executors/runner.js';
 import { subscribePlaybook } from './executors/playbookRunner.js';
-import { ensureLocalConnection } from './db.js';
+import { openTerminal, type TermSession } from './executors/pty.js';
+import { ensureLocalConnection, connectionsRepo } from './db.js';
 import { seedIfEmpty } from './seed.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -67,6 +68,11 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   const unsubMap = new Map<string, () => void>();
   const playbookUnsubMap = new Map<string, () => void>();
+  // Interactive terminal sessions, keyed by client-generated sessionId.
+  // A pending marker reserves the slot during the async open so a fast term-close /
+  // disconnect during connect can't leak the eventual PTY/SSH handle.
+  const PENDING: TermSession = { write() {}, resize() {}, kill() {} };
+  const termSessions = new Map<string, TermSession>();
 
   socket.on('subscribe', (payload: { executionId: string }) => {
     if (!payload?.executionId) return;
@@ -96,11 +102,61 @@ io.on('connection', (socket) => {
     }
   });
 
+  // --- Interactive Web Terminal ---
+  socket.on('term-open', async (payload: { sessionId: string; connectionId?: string; cols?: number; rows?: number }) => {
+    const sessionId = payload?.sessionId;
+    if (!sessionId || termSessions.has(sessionId)) return;
+
+    const connection = payload.connectionId ? connectionsRepo.get(payload.connectionId) : ensureLocalConnection();
+    if (!connection) {
+      socket.emit('term-data', { sessionId, data: '\r\n\x1b[91m[opslab] connection not found\x1b[0m\r\n' });
+      socket.emit('term-exit', { sessionId, exitCode: null });
+      return;
+    }
+
+    termSessions.set(sessionId, PENDING);
+    const session = await openTerminal({
+      connection,
+      cols: payload.cols ?? 80,
+      rows: payload.rows ?? 24,
+      onData: (data) => socket.emit('term-data', { sessionId, data }),
+      onExit: (exitCode) => {
+        socket.emit('term-exit', { sessionId, exitCode });
+        termSessions.delete(sessionId);
+      },
+      onError: (message) => socket.emit('term-data', { sessionId, data: `\r\n\x1b[91m[opslab] ${message}\x1b[0m\r\n` }),
+    });
+
+    // Client closed (or disconnected) while we were opening → tear the session down now.
+    if (termSessions.get(sessionId) !== PENDING) {
+      session.kill();
+      return;
+    }
+    termSessions.set(sessionId, session);
+  });
+
+  socket.on('term-input', (payload: { sessionId: string; data: string }) => {
+    termSessions.get(payload?.sessionId)?.write(payload.data);
+  });
+
+  socket.on('term-resize', (payload: { sessionId: string; cols: number; rows: number }) => {
+    termSessions.get(payload?.sessionId)?.resize(payload.cols, payload.rows);
+  });
+
+  socket.on('term-close', (payload: { sessionId: string }) => {
+    const s = termSessions.get(payload?.sessionId);
+    if (!s) return;
+    termSessions.delete(payload.sessionId);
+    s.kill();
+  });
+
   socket.on('disconnect', () => {
     for (const u of unsubMap.values()) u();
     unsubMap.clear();
     for (const u of playbookUnsubMap.values()) u();
     playbookUnsubMap.clear();
+    for (const s of termSessions.values()) s.kill();
+    termSessions.clear();
   });
 });
 

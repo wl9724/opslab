@@ -20,6 +20,9 @@
     "ssh2": "^1.16.0",
     "zod": "^3.24.1"
   },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
+  },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
     "@types/cors": "^2.8.17",
