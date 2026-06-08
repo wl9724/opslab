@@ -1,7 +1,7 @@
 {
   "name": "opslab",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local DevOps console — manage custom commands, run on local shell or SSH, with built-in AI assistance (Claude / OpenAI / Ollama).",
   "license": "MIT",
   "author": "wenglin",

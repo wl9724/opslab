@@ -59,7 +59,7 @@ export function App() {
           ))}
         </nav>
         <div className="px-5 py-3 text-xs text-ink-500 border-t border-ink-800">
-          v0.1.0
+          v0.1.1
         </div>
       </aside>
 

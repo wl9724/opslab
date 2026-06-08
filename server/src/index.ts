@@ -170,7 +170,7 @@ io.on('connection', (socket) => {
 
 server.listen(PORT, HOST, () => {
   console.log('');
-  console.log('  OpsLab 0.1.0  (escape-strip=v2, bash=--norc --noprofile)');
+  console.log('  OpsLab 0.1.1  (escape-strip=v2, bash=--norc --noprofile)');
   console.log(`  → ${APP_URL}`);
   if (!fs.existsSync(clientDist)) {
     console.log(`  → http://${HOST}:5173/?token=${ACCESS_TOKEN}   (Vite dev server)`);
