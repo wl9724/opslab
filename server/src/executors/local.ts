@@ -123,20 +123,31 @@ export function runLocal(opts: LocalRunOptions): LocalRunHandle {
   const env = cleanEnv(opts.env);
   const interp = resolveInterpreter(opts.interpreter ?? 'auto');
 
+  // POSIX shells choke on CRLF: a trailing \r becomes part of every command
+  // ($'\r': command not found) and silently breaks `set -e`, `\` line
+  // continuations, etc. Scripts pasted from Windows/browsers carry CRLF — so
+  // normalize to LF for bash/sh/zsh (any platform) and the default shell on
+  // POSIX. PowerShell/cmd are left untouched (they're fine with their endings).
+  const interpName = (opts.interpreter ?? 'auto').toLowerCase();
+  const targetsPosixShell =
+    ['bash', 'sh', 'zsh'].includes(interpName) ||
+    (interpName === 'auto' && process.platform !== 'win32');
+  const command = targetsPosixShell ? opts.command.replace(/\r\n?/g, '\n') : opts.command;
+
   let proc: ChildProcess;
   let cleanup: (() => void) | undefined;
 
   if (!interp) {
     // Default: pass whole template to OS shell
     const { shell, args } = pickShell();
-    proc = spawn(shell, args(opts.command), {
+    proc = spawn(shell, args(command), {
       cwd: opts.cwd ?? os.homedir(),
       env,
       windowsHide: true,
     });
   } else {
     // Script mode: write temp file and execute with interpreter
-    const file = writeTempScript(opts.command, interp.ext, interp.shebang);
+    const file = writeTempScript(command, interp.ext, interp.shebang);
     cleanup = () => safeUnlink(file);
     proc = spawn(interp.cmd, [...interp.args, file], {
       cwd: opts.cwd ?? os.homedir(),
