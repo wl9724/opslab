@@ -15,7 +15,15 @@ import { aiRouter } from './routes/ai.js';
 import { playbooksRouter } from './routes/playbooks.js';
 import { subscribe } from './executors/runner.js';
 import { subscribePlaybook } from './executors/playbookRunner.js';
-import { openTerminal, type TermSession } from './executors/pty.js';
+import {
+  openSession,
+  attachSession,
+  detachSession,
+  inputSession,
+  resizeSession,
+  closeSession,
+  type TermSink,
+} from './executors/terminalRegistry.js';
 import { ensureLocalConnection, connectionsRepo } from './db.js';
 import { seedIfEmpty } from './seed.js';
 
@@ -68,11 +76,14 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   const unsubMap = new Map<string, () => void>();
   const playbookUnsubMap = new Map<string, () => void>();
-  // Interactive terminal sessions, keyed by client-generated sessionId.
-  // A pending marker reserves the slot during the async open so a fast term-close /
-  // disconnect during connect can't leak the eventual PTY/SSH handle.
-  const PENDING: TermSession = { write() {}, resize() {}, kill() {} };
-  const termSessions = new Map<string, TermSession>();
+  // Interactive terminal sessions this socket currently owns. The sessions themselves live in the
+  // terminalRegistry (decoupled from the socket) so they survive a disconnect; here we just track
+  // which ids to detach when this socket goes away.
+  const attachedTerms = new Set<string>();
+  const makeSink = (sessionId: string): TermSink => ({
+    data: (data, seq) => socket.emit('term-data', { sessionId, data, seq }),
+    exit: (exitCode) => socket.emit('term-exit', { sessionId, exitCode }),
+  });
 
   socket.on('subscribe', (payload: { executionId: string }) => {
     if (!payload?.executionId) return;
@@ -105,49 +116,45 @@ io.on('connection', (socket) => {
   // --- Interactive Web Terminal ---
   socket.on('term-open', async (payload: { sessionId: string; connectionId?: string; cols?: number; rows?: number }) => {
     const sessionId = payload?.sessionId;
-    if (!sessionId || termSessions.has(sessionId)) return;
+    if (!sessionId) return;
 
     const connection = payload.connectionId ? connectionsRepo.get(payload.connectionId) : ensureLocalConnection();
     if (!connection) {
-      socket.emit('term-data', { sessionId, data: '\r\n\x1b[91m[opslab] connection not found\x1b[0m\r\n' });
+      socket.emit('term-data', { sessionId, data: '\r\n\x1b[91m[opslab] connection not found\x1b[0m\r\n', seq: 0 });
       socket.emit('term-exit', { sessionId, exitCode: null });
       return;
     }
 
-    termSessions.set(sessionId, PENDING);
-    const session = await openTerminal({
-      connection,
-      cols: payload.cols ?? 80,
-      rows: payload.rows ?? 24,
-      onData: (data) => socket.emit('term-data', { sessionId, data }),
-      onExit: (exitCode) => {
-        socket.emit('term-exit', { sessionId, exitCode });
-        termSessions.delete(sessionId);
-      },
-      onError: (message) => socket.emit('term-data', { sessionId, data: `\r\n\x1b[91m[opslab] ${message}\x1b[0m\r\n` }),
-    });
+    attachedTerms.add(sessionId);
+    await openSession(sessionId, connection, payload.cols ?? 80, payload.rows ?? 24, makeSink(sessionId), socket.id);
+  });
 
-    // Client closed (or disconnected) while we were opening → tear the session down now.
-    if (termSessions.get(sessionId) !== PENDING) {
-      session.kill();
-      return;
+  // Re-attach to a session that outlived a socket drop, replaying anything missed since `lastSeq`.
+  socket.on('term-attach', (payload: { sessionId: string; lastSeq?: number; cols?: number; rows?: number }) => {
+    const sessionId = payload?.sessionId;
+    if (!sessionId) return;
+    const ok = attachSession(sessionId, makeSink(sessionId), socket.id, payload.lastSeq ?? 0, payload.cols ?? 0, payload.rows ?? 0);
+    if (ok) {
+      attachedTerms.add(sessionId);
+      socket.emit('term-attached', { sessionId });
+    } else {
+      // Session is gone (server restarted, or its grace window expired) — client should start fresh.
+      socket.emit('term-gone', { sessionId });
     }
-    termSessions.set(sessionId, session);
   });
 
   socket.on('term-input', (payload: { sessionId: string; data: string }) => {
-    termSessions.get(payload?.sessionId)?.write(payload.data);
+    inputSession(payload?.sessionId, payload?.data);
   });
 
   socket.on('term-resize', (payload: { sessionId: string; cols: number; rows: number }) => {
-    termSessions.get(payload?.sessionId)?.resize(payload.cols, payload.rows);
+    resizeSession(payload?.sessionId, payload?.cols, payload?.rows);
   });
 
   socket.on('term-close', (payload: { sessionId: string }) => {
-    const s = termSessions.get(payload?.sessionId);
-    if (!s) return;
-    termSessions.delete(payload.sessionId);
-    s.kill();
+    if (!payload?.sessionId) return;
+    attachedTerms.delete(payload.sessionId);
+    closeSession(payload.sessionId);
   });
 
   socket.on('disconnect', () => {
@@ -155,8 +162,9 @@ io.on('connection', (socket) => {
     unsubMap.clear();
     for (const u of playbookUnsubMap.values()) u();
     playbookUnsubMap.clear();
-    for (const s of termSessions.values()) s.kill();
-    termSessions.clear();
+    // Don't kill the PTYs — detach them so a reconnecting client can re-attach within the grace window.
+    for (const id of attachedTerms) detachSession(id, socket.id);
+    attachedTerms.clear();
   });
 });
 
