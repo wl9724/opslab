@@ -92,6 +92,8 @@ npm start
 | `OPSLAB_HOST` | 127.0.0.1 | 监听地址（**不要**设成 0.0.0.0 除非你知道后果） |
 | `OPSLAB_WIN_SHELL` | powershell.exe | Windows 下使用的 shell，可改成 `pwsh.exe` 或 `cmd.exe` |
 | `OPSLAB_SECRET_SALT` | (内置) | 加密 salt，自定义可跨机器迁移密钥 |
+| `OPSLAB_TERM_GRACE_MS` | 120000 | Web Terminal 断线后服务端 PTY 的保活时长（毫秒），超时未重连即销毁；设 `0` 则断线立即销毁 |
+| `OPSLAB_TERM_BUFFER_BYTES` | 262144 | Web Terminal 每会话保留、可在重连时回放的输出字节上限 |
 
 ## 首次使用
 
@@ -177,7 +179,8 @@ ps aux | grep node | head -5        # 管道
 
 - **本地或远程**：顶部"连接"下拉切本地 shell / 任意 SSH 连接（切换会重开会话）
 - **真 PTY**：本地走 [`node-pty`](https://github.com/microsoft/node-pty)，远程走 SSH 的 shell 通道；窗口大小随浏览器自适应（`resize`），程序看到的是一个正常 TTY
-- **多标签**：顶部 `+` 开多个独立会话，标签上的状态点表示 连接中 / 已连接 / 已断开
+- **多标签**：顶部 `+` 开多个独立会话，标签上的状态点表示 连接中 / 已连接 / 重连中 / 已断开
+- **断线自动重连**：网络抖动、电脑休眠、`tsx watch` 重启 dev server 等导致 socket 掉线时，服务端 PTY 会保活一段时间（默认 2 分钟，见 `OPSLAB_TERM_GRACE_MS`）。前端自动重连并**回放断线期间漏掉的输出**，原有滚屏保留、长任务继续跑，无需手动操作。只有真正 `exit` 退出 shell 才需要点"重新连接"开新会话；若超过保活时长或服务端进程已重启（会话确实没了），前端会提示并自动开一个新会话
 - **复制粘贴**：选中即可用 `Ctrl/Cmd+Shift+C` 复制、`Ctrl/Cmd+Shift+V` 粘贴；裸 `Ctrl+C` 直接发给 shell（SIGINT），不会被前端拦截
 - 与命令模板不同，这里**保留**你的 rc/profile、别名、彩色提示符——它就是个完整的登录 shell
 
@@ -193,7 +196,7 @@ ps aux | grep node | head -5        # 管道
 - 高危命令拦截清单见 `server/src/executors/safety.ts`，可自行扩展（仅作用于命令模板执行）
 - AI 生成的命令 **永远** 不自动执行：必须点"执行"按钮
 - SSH 密码/私钥、AI key 全部 AES-256-GCM 加密，不落明文
-- **Web Terminal 是完整的交互式 shell**，不套高危命令拦截（无法对交互输入做有意义的解析）；它的权限与"终端"页执行命令一致，同样靠 `127.0.0.1` + token 保护。会话是临时的：关闭标签 / 断线即销毁服务端 PTY
+- **Web Terminal 是完整的交互式 shell**，不套高危命令拦截（无法对交互输入做有意义的解析）；它的权限与"终端"页执行命令一致，同样靠 `127.0.0.1` + token 保护。关闭标签会立即销毁服务端 PTY；断线时为支持自动重连会保活一小段时间（默认 2 分钟，可用 `OPSLAB_TERM_GRACE_MS` 调整或设 `0` 关闭），超时未重连即销毁。重连用的 sessionId 是本地随机生成的不可猜值，且仍受 token 门禁保护
 
 ## 项目结构
 
@@ -227,4 +230,3 @@ opslab/
 
 - Sessions 持久化跨刷新（当前刷新会清屏，但执行记录都在历史里）
 - 团队共享（导出/导入命令包）
-- Web Terminal 会话持久化 / 断线自动重连（当前断线后点"重新连接"）

@@ -3,7 +3,7 @@ import { useStore } from '../lib/store';
 import { openTerminal, type TerminalController } from '../lib/socket';
 import { TerminalView, type TerminalHandle } from '../components/TerminalView';
 
-type TermStatus = 'connecting' | 'connected' | 'closed';
+type TermStatus = 'connecting' | 'connected' | 'reconnecting' | 'closed';
 
 interface Tab {
   id: string;
@@ -19,6 +19,7 @@ function StatusDot({ status }: { status: TermStatus }) {
   const cls =
     status === 'connected' ? 'bg-emerald-400' :
     status === 'connecting' ? 'bg-sky-400 animate-pulse' :
+    status === 'reconnecting' ? 'bg-amber-400 animate-pulse' :
     'bg-red-400';
   return <span className={`w-1.5 h-1.5 rounded-full ${cls}`} />;
 }
@@ -49,22 +50,35 @@ function TerminalPane({
   useEffect(() => { onStatusChangeRef.current = onStatusChange; }, [onStatusChange]);
   useEffect(() => { onStatusChangeRef.current(status); }, [status]);
 
+  // Set when the next (re)open is because the server lost the session, so the effect prints a
+  // notice and keeps the scrollback instead of clearing for a genuinely fresh session.
+  const lostReopenRef = useRef(false);
+
   // (Re)open the session whenever the target connection changes or a reconnect is requested.
   useEffect(() => {
+    const lostReopen = lostReopenRef.current;
+    lostReopenRef.current = false;
+    if (lostReopen) {
+      termRef.current?.write('\r\n\x1b[90m[opslab] 连接已重置，正在开启新会话…\x1b[0m\r\n');
+    } else {
+      termRef.current?.clear();
+    }
+
     setStatus('connecting');
-    termRef.current?.clear();
-    let gotData = false;
     const ctrl = openTerminal({
       connectionId: connectionId || undefined,
       cols: dimsRef.current.cols,
       rows: dimsRef.current.rows,
-      onData: (data) => {
-        if (!gotData) { gotData = true; setStatus('connected'); }
-        termRef.current?.write(data);
-      },
+      onData: (data) => termRef.current?.write(data),
+      onStatus: (s) => setStatus(s),
       onExit: (code) => {
         setStatus('closed');
         termRef.current?.write(`\r\n\x1b[90m[会话结束${code != null ? ` · exit ${code}` : ''}]\x1b[0m\r\n`);
+      },
+      // Server couldn't restore the session after a drop → transparently start a fresh one.
+      onLost: () => {
+        lostReopenRef.current = true;
+        setGeneration((g) => g + 1);
       },
     });
     ctrlRef.current = ctrl;
@@ -113,9 +127,13 @@ function TerminalPane({
         <span className={
           status === 'connected' ? 'text-emerald-400' :
           status === 'connecting' ? 'text-sky-400' :
+          status === 'reconnecting' ? 'text-amber-400' :
           'text-red-400'
         }>
-          {status === 'connected' ? '已连接' : status === 'connecting' ? '连接中…' : '已断开'}
+          {status === 'connected' ? '已连接' :
+           status === 'connecting' ? '连接中…' :
+           status === 'reconnecting' ? '重连中…' :
+           '已断开'}
         </span>
         {status === 'closed' && (
           <button

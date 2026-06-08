@@ -42,6 +42,8 @@ export function subscribeRun(
   };
 }
 
+export type TermStatus = 'connecting' | 'connected' | 'reconnecting';
+
 export interface TerminalController {
   /** Send keystrokes / pasted text to the remote PTY. */
   input: (data: string) => void;
@@ -53,8 +55,13 @@ export interface TerminalController {
 
 /**
  * Open an interactive terminal session over the socket. The client mints the sessionId so it
- * can wire its listeners before the server confirms — incoming term-data/term-exit are filtered
- * by that id. Returns a controller for input/resize/close.
+ * can wire its listeners before the server confirms — incoming term-* events are filtered by id.
+ *
+ * The server keeps the PTY alive across a socket drop, so a disconnect is NOT an exit: it becomes
+ * a `reconnecting` state, and once socket.io reconnects we re-attach by sessionId and the server
+ * replays whatever output we missed (tracked by `lastSeq`). If the session is truly gone (server
+ * restarted, or its grace window expired) the server replies `term-gone` and we call `onLost` so
+ * the caller can open a fresh session.
  */
 export function openTerminal(args: {
   connectionId?: string;
@@ -62,13 +69,24 @@ export function openTerminal(args: {
   rows: number;
   onData: (data: string) => void;
   onExit: (exitCode: number | null) => void;
+  /** Connecting / connected / reconnecting transitions (the real PTY exit comes via onExit). */
+  onStatus?: (status: TermStatus) => void;
+  /** The server lost the session after a drop; the caller should open a fresh one. */
+  onLost?: () => void;
 }): TerminalController {
   const s = getSocket();
   const sessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   let closed = false;
+  let opened = false;
+  let lastSeq = 0;
+  let cols = args.cols;
+  let rows = args.rows;
 
-  const onData = (ev: { sessionId: string; data: string }) => {
-    if (ev.sessionId === sessionId) args.onData(ev.data);
+  const onData = (ev: { sessionId: string; data: string; seq?: number }) => {
+    if (ev.sessionId !== sessionId) return;
+    if (typeof ev.seq === 'number') lastSeq = ev.seq;
+    if (!closed) args.onStatus?.('connected');
+    args.onData(ev.data);
   };
   const finishOnce = (exitCode: number | null) => {
     if (closed) return;
@@ -79,24 +97,56 @@ export function openTerminal(args: {
   const onExit = (ev: { sessionId: string; exitCode: number | null }) => {
     if (ev.sessionId === sessionId) finishOnce(ev.exitCode);
   };
-  // A socket drop (e.g. server restart under `tsx watch`) kills the server-side PTY, so the
-  // session is gone — surface it as an exit rather than leaving the UI falsely "connected".
-  const onDisconnect = () => finishOnce(null);
+  const onAttached = (ev: { sessionId: string }) => {
+    if (ev.sessionId === sessionId && !closed) args.onStatus?.('connected');
+  };
+  const onGone = (ev: { sessionId: string }) => {
+    if (ev.sessionId === sessionId && !closed) args.onLost?.();
+  };
+
+  // Fires on the initial connect and on every reconnect. First time → open; afterwards → re-attach.
+  const onConnect = () => {
+    if (closed) return;
+    if (!opened) {
+      opened = true;
+      s.emit('term-open', { sessionId, connectionId: args.connectionId, cols, rows });
+    } else {
+      args.onStatus?.('reconnecting');
+      s.emit('term-attach', { sessionId, lastSeq, cols, rows });
+    }
+  };
+  const onDisconnect = () => { if (!closed) args.onStatus?.('reconnecting'); };
 
   function teardown() {
     s.off('term-data', onData);
     s.off('term-exit', onExit);
+    s.off('term-attached', onAttached);
+    s.off('term-gone', onGone);
+    s.off('connect', onConnect);
     s.off('disconnect', onDisconnect);
   }
 
   s.on('term-data', onData);
   s.on('term-exit', onExit);
+  s.on('term-attached', onAttached);
+  s.on('term-gone', onGone);
+  s.on('connect', onConnect);
   s.on('disconnect', onDisconnect);
-  s.emit('term-open', { sessionId, connectionId: args.connectionId, cols: args.cols, rows: args.rows });
+
+  args.onStatus?.('connecting');
+  // If the socket is already up, open now; otherwise onConnect will fire and do it.
+  if (s.connected) {
+    opened = true;
+    s.emit('term-open', { sessionId, connectionId: args.connectionId, cols, rows });
+  }
 
   return {
     input: (data) => { if (!closed) s.emit('term-input', { sessionId, data }); },
-    resize: (cols, rows) => { if (!closed) s.emit('term-resize', { sessionId, cols, rows }); },
+    resize: (c, r) => {
+      cols = c;
+      rows = r;
+      if (!closed) s.emit('term-resize', { sessionId, cols: c, rows: r });
+    },
     close: () => {
       if (closed) return;
       closed = true;
