@@ -156,7 +156,26 @@ export function openTerminal(args: {
   };
 }
 
-import type { PlaybookEvent } from './types';
+import type { PlaybookEvent, DebugLogEntry } from './types';
+
+/**
+ * Live debug-log stream for the 调试 page. The server pushes every newly recorded
+ * entry as a `debug-log` event after `debug-subscribe`. Re-subscribes automatically
+ * when the socket reconnects (the server-side subscription dies with the socket).
+ */
+export function subscribeDebugLogs(onEntry: (entry: DebugLogEntry) => void): () => void {
+  const s = getSocket();
+  const handler = (entry: DebugLogEntry) => onEntry(entry);
+  const resubscribe = () => s.emit('debug-subscribe');
+  s.on('debug-log', handler);
+  s.on('connect', resubscribe);
+  if (s.connected) resubscribe();
+  return () => {
+    s.emit('debug-unsubscribe');
+    s.off('debug-log', handler);
+    s.off('connect', resubscribe);
+  };
+}
 
 export function subscribePlaybook(
   playbookRunId: string,

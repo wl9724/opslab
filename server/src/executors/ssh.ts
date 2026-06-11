@@ -2,6 +2,9 @@ import { Client, type ClientChannel } from 'ssh2';
 import type { Connection } from '../types.js';
 import { getSecret } from '../secrets.js';
 import { resolveInterpreter } from './interpreters.js';
+import { createLogger } from '../log.js';
+
+const log = createLogger('ssh');
 
 export interface SshRunOptions {
   connection: Connection;
@@ -68,12 +71,16 @@ export function runSsh(opts: SshRunOptions): SshRunHandle {
   const client = new Client();
   let channel: ClientChannel | null = null;
   let killed = false;
+  const target = `${connection.username}@${connection.host}:${connection.port ?? 22}`;
 
   const { remoteCmd, stdinScript } = buildRemoteCommand(opts);
+  log.debug('开始连接', { target, connection: connection.name, interpreter: opts.interpreter ?? 'auto' });
 
   client.on('ready', () => {
+    log.debug('连接就绪，执行命令', { target, remoteCmd: remoteCmd.slice(0, 200) });
     client.exec(remoteCmd, { pty: stdinScript ? false : { term: 'xterm-256color' } }, (err, ch) => {
       if (err) {
+        log.warn('exec 通道打开失败', { target, error: err.message });
         opts.onError(err);
         client.end();
         opts.onExit(null, null);
@@ -83,6 +90,7 @@ export function runSsh(opts: SshRunOptions): SshRunHandle {
       ch.on('data', (d: Buffer) => opts.onStdout(d.toString('utf8')));
       ch.stderr.on('data', (d: Buffer) => opts.onStderr(d.toString('utf8')));
       ch.on('close', (code: number | null, signal: string | null) => {
+        log.debug('命令通道关闭', { target, code, signal });
         client.end();
         opts.onExit(code ?? null, signal ?? null);
       });
@@ -94,6 +102,7 @@ export function runSsh(opts: SshRunOptions): SshRunHandle {
   });
 
   client.on('error', (err) => {
+    log.warn('SSH 连接错误', { target, connection: connection.name, error: err.message });
     opts.onError(err);
     if (!killed) opts.onExit(null, null);
   });
@@ -140,10 +149,12 @@ export function testSsh(connection: Connection): Promise<{ ok: boolean; message:
     client.on('ready', () => {
       clearTimeout(timer);
       client.end();
+      log.info('连接测试成功', { connection: connection.name, host: connection.host });
       resolve({ ok: true, message: 'Connected' });
     });
     client.on('error', (err) => {
       clearTimeout(timer);
+      log.warn('连接测试失败', { connection: connection.name, host: connection.host, error: err.message });
       resolve({ ok: false, message: err.message });
     });
     try {

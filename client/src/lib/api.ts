@@ -7,6 +7,9 @@ import type {
   TargetType,
   SafetyResult,
   Playbook,
+  DebugLogEntry,
+  DebugLogLevel,
+  DebugState,
 } from './types';
 
 function getToken(): string {
@@ -83,6 +86,7 @@ export const api = {
     commandId?: string;
     connectionId?: string;
     template?: string;
+    interpreter?: string;
     values?: Record<string, string>;
     confirmDanger?: boolean;
   }) =>
@@ -126,6 +130,24 @@ export const api = {
   }),
   abortPlaybook: (playbookRunId: string) =>
     request<{ ok: boolean }>(`/playbooks/run/${playbookRunId}/abort`, { method: 'POST' }),
+
+  // debug
+  debugLogs: (params?: { level?: DebugLogLevel; scope?: string; q?: string; afterId?: number; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.level) q.set('level', params.level);
+    if (params?.scope) q.set('scope', params.scope);
+    if (params?.q) q.set('q', params.q);
+    if (params?.afterId !== undefined) q.set('afterId', String(params.afterId));
+    if (params?.limit !== undefined) q.set('limit', String(params.limit));
+    const qs = q.toString();
+    return request<{ entries: DebugLogEntry[]; total: number; scopes: string[]; debugEnabled: boolean }>(
+      `/debug/logs${qs ? `?${qs}` : ''}`,
+    );
+  },
+  debugState: () => request<DebugState>('/debug/state'),
+  setDebugEnabled: (enabled: boolean) =>
+    request<{ debugEnabled: boolean }>('/debug/config', { method: 'POST', body: JSON.stringify({ enabled }) }),
+  clearDebugLogs: () => request<{ cleared: number }>('/debug/clear', { method: 'POST' }),
 
   // ai
   listProviders: () => request<AIProvider[]>('/ai/providers'),

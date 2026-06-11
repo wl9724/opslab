@@ -7,7 +7,10 @@ import { runLocal, type LocalRunHandle } from './local.js';
 import { runSsh, type SshRunHandle } from './ssh.js';
 import { render, validateValues } from './template.js';
 import { checkSafety } from './safety.js';
+import { createLogger, isDebugEnabled } from '../log.js';
 import type { Execution, TemplateVar } from '../types.js';
+
+const log = createLogger('runner');
 
 export interface StartRunInput {
   commandId?: string;
@@ -38,6 +41,7 @@ interface BufferedChunk {
 
 interface ActiveRun {
   executionId: string;
+  startedAtMs: number;
   handle: Handle | null;
   outputStream: fs.WriteStream | null;
   outputBytes: number;
@@ -207,6 +211,7 @@ export function startRun(input: StartRunInput): StartRunResult {
 
   const safety = checkSafety(rendered);
   if (safety.level === 'danger' && !input.confirmDanger) {
+    log.warn('高危命令已拦截', { reasons: safety.reasons, command: rendered.slice(0, 200) });
     throw new RunnerError(
       `dangerous command blocked (${safety.reasons.join(', ')}). re-run with confirmDanger=true.`,
       409,
@@ -231,10 +236,18 @@ export function startRun(input: StartRunInput): StartRunResult {
     exitCode: null,
   });
 
+  log.info('执行开始', {
+    executionId: id,
+    connection: `${connection.name} (${connection.type})`,
+    interpreter,
+    command: rendered.slice(0, 300),
+  });
+
   // Pre-register active state synchronously BEFORE spawning, so any chunk that arrives
   // (even sync-ish) can be buffered.
   const ar: ActiveRun = {
     executionId: id,
+    startedAtMs: Date.now(),
     handle: null,
     outputStream,
     outputBytes: 0,
@@ -246,13 +259,14 @@ export function startRun(input: StartRunInput): StartRunResult {
   active.set(id, ar);
 
   const onChunk = (stream: 'stdout' | 'stderr', rawData: string) => {
-    if (process.env.OPSLAB_DEBUG === '1') {
-      console.error(`[opslab raw ${stream}] ${JSON.stringify(rawData)}`);
+    // isDebugEnabled guard keeps JSON.stringify off the hot path when debug is off.
+    if (isDebugEnabled()) {
+      log.debug(`raw ${stream} (${id})`, JSON.stringify(rawData));
     }
     const data = stripNoiseOsc(rawData);
     if (!data) return;
-    if (process.env.OPSLAB_DEBUG === '1' && data !== rawData) {
-      console.error(`[opslab clean ${stream}] ${JSON.stringify(data)}`);
+    if (isDebugEnabled() && data !== rawData) {
+      log.debug(`clean ${stream} (${id})`, JSON.stringify(data));
     }
     // Same cleaned bytes go to disk + buffer + live listeners — so History and Runner agree.
     ar.outputStream?.write(data);
@@ -264,6 +278,13 @@ export function startRun(input: StartRunInput): StartRunResult {
     ar.outputStream?.end();
     ar.outputStream = null;
     executionsRepo.finish(id, status, exitCode, ar.outputBytes);
+    log[status === 'failed' ? 'warn' : 'info']('执行结束', {
+      executionId: id,
+      status,
+      exitCode,
+      outputBytes: ar.outputBytes,
+      durationMs: Date.now() - ar.startedAtMs,
+    });
     ar.done = { status, exitCode };
     ar.handle = null;
     // Keep state around for late subscribers; GC after TTL.
@@ -322,8 +343,16 @@ export function startRun(input: StartRunInput): StartRunResult {
 export function stopRun(executionId: string): boolean {
   const ar = active.get(executionId);
   if (!ar || !ar.handle || ar.done) return false;
+  log.info('手动停止执行', { executionId });
   ar.handle.kill();
   return true;
+}
+
+/** Executions still running right now (for the debug state panel). */
+export function activeRunCount(): number {
+  let n = 0;
+  for (const ar of active.values()) if (!ar.done) n++;
+  return n;
 }
 
 export function readOutput(executionId: string): string {

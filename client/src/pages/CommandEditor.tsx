@@ -4,6 +4,7 @@ import Editor from '@monaco-editor/react';
 import { api, extractVars } from '../lib/api';
 import { useStore } from '../lib/store';
 import { AIAssistPanel } from '../components/AIAssistPanel';
+import { CommandDebugPanel } from '../components/CommandDebugPanel';
 import type { CommandTemplate, TargetType, TemplateVar, VarType } from '../lib/types';
 
 const TARGETS: TargetType[] = ['local', 'ssh', 'docker', 'k8s'];
@@ -56,6 +57,7 @@ export function CommandEditor() {
   const [loading, setLoading] = useState(false);
   const [tagsInput, setTagsInput] = useState('');
   const [aiOpen, setAiOpen] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false);
   const [customInterp, setCustomInterp] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -169,8 +171,13 @@ export function CommandEditor() {
         <div className="flex items-center gap-3 mb-5">
           <h1 className="text-xl font-semibold">{id ? '编辑命令' : '新建命令'}</h1>
           <button
+            onClick={() => setDebugOpen(!debugOpen)}
+            className={`ml-auto px-3 py-1.5 rounded text-sm ${debugOpen ? 'bg-emerald-600' : 'bg-ink-800 hover:bg-ink-700'}`}
+            title="用当前编辑内容试运行，无需保存"
+          >⚒ 调试</button>
+          <button
             onClick={() => setAiOpen(!aiOpen)}
-            className={`ml-auto px-3 py-1.5 rounded text-sm ${aiOpen ? 'bg-emerald-600' : 'bg-ink-800 hover:bg-ink-700'}`}
+            className={`px-3 py-1.5 rounded text-sm ${aiOpen ? 'bg-emerald-600' : 'bg-ink-800 hover:bg-ink-700'}`}
           >✦ AI 助手</button>
           <button onClick={() => navigate('/')} className="px-3 py-1.5 bg-ink-800 hover:bg-ink-700 rounded text-sm">取消</button>
           <button
@@ -348,8 +355,19 @@ export function CommandEditor() {
         </div>
       </div>
 
+      {debugOpen && (
+        <div className="w-[26rem] shrink-0 border-l border-ink-800 p-3 h-full">
+          <CommandDebugPanel
+            template={form.template}
+            interpreter={form.interpreter}
+            vars={form.vars}
+            targetType={form.targetType}
+          />
+        </div>
+      )}
+
       {aiOpen && (
-        <div className="w-96 border-l border-ink-800 p-3">
+        <div className="w-96 shrink-0 border-l border-ink-800 p-3">
           <AIAssistPanel
             context={{ targetType: form.targetType, currentCommand: form.template }}
             onInsert={(code) => setForm((cur) => ({ ...cur, template: code }))}
