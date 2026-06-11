@@ -4,6 +4,9 @@ import { nanoid } from 'nanoid';
 import { providersRepo } from '../db.js';
 import { getSecret, setSecret, deleteSecret, hasSecret } from '../secrets.js';
 import { getChatProvider } from '../ai/index.js';
+import { createLogger } from '../log.js';
+
+const log = createLogger('ai');
 
 const ProviderInputSchema = z.object({
   name: z.string().min(1),
@@ -104,13 +107,27 @@ aiRouter.post('/chat', async (req, res) => {
   const controller = new AbortController();
   req.on('close', () => controller.abort());
 
+  // Log metadata only — message content may hold hosts/keys the user pasted.
+  log.info('AI 对话请求', {
+    provider: provider.name,
+    type: provider.type,
+    model: provider.model,
+    messages: messages.length,
+  });
+  const startedAt = Date.now();
+
   const impl = getChatProvider(provider.type);
   try {
     for await (const chunk of impl.stream(provider, { providerId: provider.id, messages, context }, controller.signal)) {
+      if (chunk.type === 'error') {
+        log.warn('AI 返回错误', { provider: provider.name, error: chunk.message });
+      }
       res.write(`data: ${JSON.stringify(chunk)}\n\n`);
       if (chunk.type === 'done') break;
     }
+    log.debug('AI 对话完成', { provider: provider.name, durationMs: Date.now() - startedAt });
   } catch (e) {
+    log.error('AI 流式调用异常', { provider: provider.name, error: (e as Error).message });
     res.write(`data: ${JSON.stringify({ type: 'error', message: (e as Error).message })}\n\n`);
     res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
   }

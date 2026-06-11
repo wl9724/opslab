@@ -29,6 +29,8 @@ Node Local Server (Express + Socket.IO)
 - AI 助手：编辑器侧栏对话生成命令，可一键塞入；支持 Claude / OpenAI（含兼容端点：DeepSeek/通义/本地代理）/ Ollama，多 provider 切换
 - 安全护栏：高危命令（rm -rf /, mkfs, fork bomb 等）默认拦截需二次确认；AI 生成的命令永远不自动执行
 - 执行历史：每次执行的完整输出落本地文件，可回看
+- **边编辑边调试**：命令编辑页、Playbook 编辑页右上角 **⚒ 调试** 打开调试侧栏，用**当前草稿**直接试跑（无需保存）——命令页改一笔点一下"试运行"立即看输出；Playbook 页可整本试跑，也可在任一步骤点 **▶ 单步** 只跑这一步（自动代入之前运行捕获的变量，调第 N 步不用从头重跑）
+- **调试面板**：左侧"调试"页实时查看服务端日志（执行 / SSH / 终端 / AI / HTTP），按级别、模块、关键字过滤，可暂停、导出、清空；附运行时状态（内存、活跃执行、终端会话、socket 连接数）。调试模式可在页面上随时开关，开启后额外记录 debug 明细（含命令原始输出字节）
 
 ## 系统要求
 
@@ -94,6 +96,7 @@ npm start
 | `OPSLAB_SECRET_SALT` | (内置) | 加密 salt，自定义可跨机器迁移密钥 |
 | `OPSLAB_TERM_GRACE_MS` | 120000 | Web Terminal 断线后服务端 PTY 的保活时长（毫秒），超时未重连即销毁；设 `0` 则断线立即销毁 |
 | `OPSLAB_TERM_BUFFER_BYTES` | 262144 | Web Terminal 每会话保留、可在重连时回放的输出字节上限 |
+| `OPSLAB_DEBUG` | (关) | 设 `1` 启动即开调试模式（记录 debug 级明细日志）；也可在"调试"页运行时开关 |
 
 ## 首次使用
 
@@ -165,6 +168,8 @@ ps aux | grep node | head -5        # 管道
 
 执行时左侧实时显示每步状态，点任一步骤切看它的终端输出。
 
+**编辑时调试**：编辑页右上 **⚒ 调试** 打开侧栏——不用保存就能整本试跑当前草稿；每个步骤卡片上还有 **▶ 单步**，只跑这一步。单步运行会自动把之前（整本或单步）运行捕获到的变量代入，所以调试第 5 步不需要每次重跑前 4 步。
+
 **例子**：变量捕获
 ```
 步骤1：echo "prod-cluster"          → captureAs: cluster_name
@@ -208,18 +213,21 @@ opslab/
 │       ├── db.ts          # SQLite 仓储
 │       ├── secrets.ts     # 加密
 │       ├── seed.ts        # 内置命令模板
-│       ├── routes/        # REST 路由
+│       ├── log.ts         # 调试日志（环形缓冲 + 实时推送）
+│       ├── routes/        # REST 路由（含 /api/debug）
 │       ├── executors/     # local / ssh / runner / pty (Web Terminal) / template / safety
 │       └── ai/            # claude / openai / ollama adapters
 ├── client/                # React + Vite + Tailwind
 │   └── src/
-│       ├── pages/         # …Runner, WebTerminal, Playbooks, Connections …
+│       ├── pages/         # …Runner, WebTerminal, Playbooks, Connections, Debug …
 │       ├── components/    # TerminalView, VariableForm, AIAssistPanel
 │       └── lib/           # api / socket / store / types
 └── data/                  # 用户数据 (不入 git)
 ```
 
 ## 故障排查
+
+先开左侧 **调试** 页：执行失败、SSH 连不上、AI 报错都会在这里留下带上下文的日志（高危拦截原因、SSH 错误消息、AI provider 异常等）。需要更细的现场（HTTP 请求、命令原始输出字节流）就把页面右上"调试模式"打开再复现一次，可一键导出日志文件。
 
 - **`better-sqlite3` 装失败**：装编译工具链（Linux `apt install build-essential python3`，Mac `xcode-select --install`，Windows `npm install -g windows-build-tools`），然后 `npm rebuild better-sqlite3`。
 - **AI 无响应**：检查"AI 设置"里 provider 是否启用、是否设了 API key；Ollama 需自己确保 `ollama serve` 已起。

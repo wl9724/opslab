@@ -96,3 +96,36 @@ export type PlaybookEvent =
   | { type: 'step-done'; playbookRunId: string; index: number; executionId: string; status: ExecStatus; exitCode: number | null; captured?: { name: string; value: string } }
   | { type: 'step-skipped'; playbookRunId: string; index: number; reason: string }
   | { type: 'done'; playbookRunId: string; status: 'completed' | 'failed' | 'aborted'; capturedVars: Record<string, string> };
+
+export type DebugLogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+export interface DebugLogEntry {
+  id: number;
+  ts: number;
+  level: DebugLogLevel;
+  scope: string;
+  msg: string;
+  detail?: string;
+}
+
+export interface DebugTermSession {
+  id: string;
+  size: string;
+  attached: boolean;
+  exited: boolean;
+  bufferedBytes: number;
+}
+
+export interface DebugState {
+  version: string;
+  node: string;
+  platform: string;
+  pid: number;
+  startedAt: number;
+  uptimeSec: number;
+  memory: { rss: number; heapUsed: number; heapTotal: number };
+  debugEnabled: boolean;
+  activeRuns: number;
+  termSessions: DebugTermSession[];
+  socketClients?: number;
+}
