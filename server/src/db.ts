@@ -165,6 +165,28 @@ export const commandsRepo = {
   delete(id: string): boolean {
     return db.prepare('DELETE FROM commands WHERE id = ?').run(id).changes > 0;
   },
+  /** Insert or replace a full row, preserving id/timestamps. Used by backup import. */
+  upsert(c: CommandTemplate): void {
+    db.prepare(
+      `INSERT OR REPLACE INTO commands (id, name, description, template, target_type, interpreter, vars_json, tags_json, favorite, created_at, updated_at)
+       VALUES (@id, @name, @description, @template, @target_type, @interpreter, @vars_json, @tags_json, @favorite, @created_at, @updated_at)`,
+    ).run({
+      id: c.id,
+      name: c.name,
+      description: c.description,
+      template: c.template,
+      target_type: c.targetType,
+      interpreter: c.interpreter ?? 'auto',
+      vars_json: JSON.stringify(c.vars ?? []),
+      tags_json: JSON.stringify(c.tags ?? []),
+      favorite: c.favorite ? 1 : 0,
+      created_at: c.createdAt,
+      updated_at: c.updatedAt,
+    });
+  },
+  clear(): void {
+    db.exec('DELETE FROM commands');
+  },
 };
 
 function rowToConnection(r: any): Connection {
@@ -228,6 +250,25 @@ export const connectionsRepo = {
   },
   delete(id: string): boolean {
     return db.prepare('DELETE FROM connections WHERE id = ?').run(id).changes > 0;
+  },
+  upsert(c: Connection): void {
+    db.prepare(
+      `INSERT OR REPLACE INTO connections (id, name, type, host, port, username, auth_type, secret_ref, created_at)
+       VALUES (@id, @name, @type, @host, @port, @username, @auth_type, @secret_ref, @created_at)`,
+    ).run({
+      id: c.id,
+      name: c.name,
+      type: c.type,
+      host: c.host ?? null,
+      port: c.port ?? null,
+      username: c.username ?? null,
+      auth_type: c.authType ?? null,
+      secret_ref: c.secretRef ?? null,
+      created_at: c.createdAt,
+    });
+  },
+  clear(): void {
+    db.exec('DELETE FROM connections');
   },
 };
 
@@ -354,6 +395,24 @@ export const providersRepo = {
   delete(id: string): boolean {
     return db.prepare('DELETE FROM ai_providers WHERE id = ?').run(id).changes > 0;
   },
+  upsert(p: AIProvider): void {
+    db.prepare(
+      `INSERT OR REPLACE INTO ai_providers (id, name, type, base_url, model, secret_ref, enabled, is_default)
+       VALUES (@id, @name, @type, @base_url, @model, @secret_ref, @enabled, @is_default)`,
+    ).run({
+      id: p.id,
+      name: p.name,
+      type: p.type,
+      base_url: p.baseUrl ?? null,
+      model: p.model,
+      secret_ref: p.secretRef ?? null,
+      enabled: p.enabled ? 1 : 0,
+      is_default: p.isDefault ? 1 : 0,
+    });
+  },
+  clear(): void {
+    db.exec('DELETE FROM ai_providers');
+  },
 };
 
 function rowToPlaybook(r: any): Playbook {
@@ -411,6 +470,23 @@ export const playbooksRepo = {
   },
   delete(id: string): boolean {
     return db.prepare('DELETE FROM playbooks WHERE id = ?').run(id).changes > 0;
+  },
+  upsert(p: Playbook): void {
+    db.prepare(
+      `INSERT OR REPLACE INTO playbooks (id, name, description, default_connection_id, steps_json, created_at, updated_at)
+       VALUES (@id, @name, @description, @default_connection_id, @steps_json, @created_at, @updated_at)`,
+    ).run({
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      default_connection_id: p.defaultConnectionId ?? null,
+      steps_json: JSON.stringify(p.steps ?? []),
+      created_at: p.createdAt,
+      updated_at: p.updatedAt,
+    });
+  },
+  clear(): void {
+    db.exec('DELETE FROM playbooks');
   },
 };
 

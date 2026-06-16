@@ -7,6 +7,8 @@ import type {
   TargetType,
   SafetyResult,
   Playbook,
+  BackupFile,
+  ImportSummary,
 } from './types';
 
 function getToken(): string {
@@ -134,6 +136,15 @@ export const api = {
   updateProvider: (id: string, patch: any) =>
     request<AIProvider>(`/ai/providers/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
   deleteProvider: (id: string) => request<void>(`/ai/providers/${id}`, { method: 'DELETE' }),
+
+  // backup (one-click export / import of all config)
+  exportBackup: (secrets: boolean) =>
+    request<BackupFile>(`/backup/export?secrets=${secrets ? 1 : 0}`),
+  importBackup: (data: unknown, mode: 'merge' | 'replace') =>
+    request<ImportSummary>('/backup/import', {
+      method: 'POST',
+      body: JSON.stringify({ data, mode }),
+    }),
 
   chat: async function* (req: {
     providerId?: string;

@@ -13,6 +13,7 @@ import { executionsRouter } from './routes/executions.js';
 import { runRouter } from './routes/run.js';
 import { aiRouter } from './routes/ai.js';
 import { playbooksRouter } from './routes/playbooks.js';
+import { backupRouter } from './routes/backup.js';
 import { subscribe } from './executors/runner.js';
 import { subscribePlaybook } from './executors/playbookRunner.js';
 import {
@@ -35,7 +36,7 @@ seedIfEmpty();
 
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '16mb' }));
 
 app.use((req, res, next) => {
   if (req.path === '/api/health') return next();
@@ -54,6 +55,7 @@ app.use('/api/executions', executionsRouter);
 app.use('/api/run', runRouter);
 app.use('/api/ai', aiRouter);
 app.use('/api/playbooks', playbooksRouter);
+app.use('/api/backup', backupRouter);
 
 const clientDist = path.join(ROOT_DIR, 'client', 'dist');
 if (fs.existsSync(clientDist)) {

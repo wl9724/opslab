@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState, type ChangeEvent } from 'react';
 import { useStore } from '../lib/store';
 import { api } from '../lib/api';
 import type { AIProvider, AIProviderType } from '../lib/types';
@@ -28,7 +28,13 @@ function blank(type: AIProviderType = 'claude'): FormState {
 export function Settings() {
   const providers = useStore((s) => s.providers);
   const reload = useStore((s) => s.reloadProviders);
+  const loadAll = useStore((s) => s.loadAll);
   const [editing, setEditing] = useState<FormState | null>(null);
+  const [includeSecrets, setIncludeSecrets] = useState(false);
+  const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
+  const [busy, setBusy] = useState(false);
+  const [backupMsg, setBackupMsg] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   function edit(p: AIProvider) {
     setEditing({
@@ -71,11 +77,66 @@ export function Settings() {
     await reload();
   }
 
+  async function exportBackup() {
+    setBusy(true);
+    setBackupMsg(null);
+    try {
+      const file = await api.exportBackup(includeSecrets);
+      const d = new Date();
+      const p = (n: number) => String(n).padStart(2, '0');
+      const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+      const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `opslab-backup-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setBackupMsg('✓ 已导出备份文件');
+    } catch (e) {
+      setBackupMsg('✗ 导出失败：' + (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importBackup(e: ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    if (
+      importMode === 'replace' &&
+      !confirm('覆盖导入会先清空当前所有命令、连接、Playbook、AI Provider，再从文件还原。确定继续？')
+    )
+      return;
+    setBusy(true);
+    setBackupMsg(null);
+    try {
+      const data = JSON.parse(await f.text());
+      const sum = await api.importBackup(data, importMode);
+      await loadAll();
+      const i = sum.imported;
+      setBackupMsg(
+        `✓ 导入完成（${sum.mode === 'replace' ? '覆盖' : '合并'}）：命令 ${i.commands} · 连接 ${i.connections} · Playbook ${i.playbooks} · Provider ${i.providers}` +
+          (sum.secretsRestored ? ` · 恢复密钥 ${sum.secretsRestored}` : '') +
+          (sum.skipped ? ` · 跳过 ${sum.skipped}` : ''),
+      );
+    } catch (e) {
+      setBackupMsg('✗ 导入失败：' + (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="p-6">
-      <div className="flex items-center gap-3 mb-5">
-        <h1 className="text-xl font-semibold">AI 设置</h1>
-        <span className="text-sm text-ink-500">{providers.length} 个 provider</span>
+      <h1 className="text-xl font-semibold mb-6">设置</h1>
+
+      <div className="flex items-center gap-3 mb-3 max-w-3xl">
+        <h2 className="text-lg font-semibold">AI Provider</h2>
+        <span className="text-sm text-ink-500">{providers.length} 个</span>
         <button
           onClick={() => setEditing(blank())}
           className="ml-auto px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium"
@@ -108,6 +169,67 @@ export function Settings() {
             <button onClick={() => remove(p)} className="px-2 py-1 text-xs bg-ink-800 hover:bg-red-900 rounded text-ink-400">删除</button>
           </div>
         ))}
+      </div>
+
+      {/* ---- one-click backup / restore ---- */}
+      <div className="max-w-3xl mt-12">
+        <h2 className="text-lg font-semibold mb-1">数据备份 / 迁移</h2>
+        <p className="text-xs text-ink-500 mb-3">
+          把命令、连接、Playbook、AI Provider 一键导出为单个 JSON 文件，可在另一台机器导入还原。执行历史不包含在内。
+        </p>
+        <div className="bg-ink-900 border border-ink-800 rounded p-4 space-y-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              onClick={exportBackup}
+              disabled={busy}
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50"
+            >⬇ 导出备份</button>
+            <label className="flex items-center gap-2 text-sm text-ink-300">
+              <input
+                type="checkbox"
+                checked={includeSecrets}
+                onChange={(e) => setIncludeSecrets(e.target.checked)}
+                className="accent-emerald-500"
+              />
+              包含密钥（SSH 密码 / API Key）
+            </label>
+            {includeSecrets && (
+              <span className="text-[11px] text-amber-400">⚠ 文件将含明文凭据，请妥善保管</span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 flex-wrap border-t border-ink-800 pt-4">
+            <button
+              onClick={() => fileRef.current?.click()}
+              disabled={busy}
+              className="px-3 py-1.5 bg-ink-800 hover:bg-ink-700 rounded text-sm disabled:opacity-50"
+            >⬆ 选择文件导入…</button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="application/json,.json"
+              onChange={importBackup}
+              className="hidden"
+            />
+            <label className="flex items-center gap-2 text-sm text-ink-300">
+              模式
+              <select
+                value={importMode}
+                onChange={(e) => setImportMode(e.target.value as 'merge' | 'replace')}
+                className="bg-ink-950 border border-ink-700 rounded px-2 py-1 text-sm"
+              >
+                <option value="merge">合并（保留现有，按 ID 覆盖同项）</option>
+                <option value="replace">覆盖（清空后还原）</option>
+              </select>
+            </label>
+          </div>
+
+          {backupMsg && (
+            <div className="text-xs text-ink-200 bg-ink-950 border border-ink-800 rounded px-3 py-2 break-all">
+              {backupMsg}
+            </div>
+          )}
+        </div>
       </div>
 
       {editing && (

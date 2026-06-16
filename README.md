@@ -29,6 +29,7 @@ Node Local Server (Express + Socket.IO)
 - AI 助手：编辑器侧栏对话生成命令，可一键塞入；支持 Claude / OpenAI（含兼容端点：DeepSeek/通义/本地代理）/ Ollama，多 provider 切换
 - 安全护栏：高危命令（rm -rf /, mkfs, fork bomb 等）默认拦截需二次确认；AI 生成的命令永远不自动执行
 - 执行历史：每次执行的完整输出落本地文件，可回看
+- **一键导出/导入**：在「设置」页把命令、连接、Playbook、AI Provider 备份成单个 JSON 文件，换机时一键导入还原（合并 / 覆盖两种模式，按 ID 保留引用关系）。密钥（SSH 密码 / API Key）默认不导出，可勾选「包含密钥」用明文形式随文件迁移，导入时按本机密钥重新加密
 
 ## 系统要求
 
