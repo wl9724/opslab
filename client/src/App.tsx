@@ -10,6 +10,7 @@ import { Settings } from './pages/Settings';
 import { Playbooks } from './pages/Playbooks';
 import { PlaybookEditor } from './pages/PlaybookEditor';
 import { PlaybookRunner } from './pages/PlaybookRunner';
+import { Debug } from './pages/Debug';
 import { useStore } from './lib/store';
 
 const NAV = [
@@ -20,6 +21,7 @@ const NAV = [
   { to: '/connections', label: '连接', icon: '⇄' },
   { to: '/history', label: '历史', icon: '⌛' },
   { to: '/settings', label: '设置', icon: '✦' },
+  { to: '/debug', label: '调试', icon: '⌬' },
 ];
 
 export function App() {
@@ -84,6 +86,7 @@ export function App() {
             <Route path="/connections" element={<Connections />} />
             <Route path="/history" element={<History />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/debug" element={<Debug />} />
           </Routes>
         </div>
       </main>

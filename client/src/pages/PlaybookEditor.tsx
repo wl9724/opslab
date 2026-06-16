@@ -1,7 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useStore } from '../lib/store';
+import {
+  PlaybookDebugPanel,
+  type PlaybookDebugHandle,
+  type DebugScope,
+} from '../components/PlaybookDebugPanel';
 import type { Playbook, PlaybookStep } from '../lib/types';
 
 function emptyPlaybook(): Omit<Playbook, 'id' | 'createdAt' | 'updatedAt'> {
@@ -29,6 +34,9 @@ export function PlaybookEditor() {
 
   const [form, setForm] = useState(emptyPlaybook());
   const [loading, setLoading] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [pendingRun, setPendingRun] = useState<DebugScope | null>(null);
+  const debugRef = useRef<PlaybookDebugHandle | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -37,6 +45,21 @@ export function PlaybookEditor() {
       setForm(rest);
     });
   }, [id]);
+
+  // 单步/全部按钮可能在面板还没打开时点下：先开面板，等它挂载后再触发运行
+  useEffect(() => {
+    if (!debugOpen || pendingRun === null) return;
+    const t = setTimeout(() => {
+      debugRef.current?.run(pendingRun);
+      setPendingRun(null);
+    }, 0);
+    return () => clearTimeout(t);
+  }, [debugOpen, pendingRun]);
+
+  function debugRun(scope: DebugScope) {
+    setDebugOpen(true);
+    setPendingRun(scope);
+  }
 
   function setStep(idx: number, patch: Partial<PlaybookStep>) {
     setForm((cur) => {
@@ -87,12 +110,18 @@ export function PlaybookEditor() {
   }
 
   return (
-    <div className="p-6">
+    <div className="flex h-full">
+      <div className="flex-1 p-6 overflow-auto">
       <div className="flex items-center gap-3 mb-5">
         <h1 className="text-xl font-semibold">{id ? '编辑 Playbook' : '新建 Playbook'}</h1>
         <button
+          onClick={() => setDebugOpen(!debugOpen)}
+          className={`ml-auto px-3 py-1.5 rounded text-sm ${debugOpen ? 'bg-emerald-600' : 'bg-ink-800 hover:bg-ink-700'}`}
+          title="直接运行当前草稿，无需保存"
+        >⚒ 调试</button>
+        <button
           onClick={() => navigate('/playbooks')}
-          className="ml-auto px-3 py-1.5 bg-ink-800 hover:bg-ink-700 rounded text-sm"
+          className="px-3 py-1.5 bg-ink-800 hover:bg-ink-700 rounded text-sm"
         >取消</button>
         <button
           onClick={save}
@@ -151,6 +180,11 @@ export function PlaybookEditor() {
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-xs bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded">{i + 1}</span>
                   <div className="flex-1 text-sm">{cmd?.name ?? '(inline)'}</div>
+                  <button
+                    onClick={() => debugRun(i)}
+                    title="只运行这一步（自动代入之前捕获的变量）"
+                    className="text-xs text-ink-400 hover:text-emerald-300"
+                  >▶ 单步</button>
                   <button onClick={() => move(i, -1)} disabled={i === 0} className="text-xs text-ink-400 hover:text-ink-200 disabled:opacity-30">↑</button>
                   <button onClick={() => move(i, 1)} disabled={i === form.steps.length - 1} className="text-xs text-ink-400 hover:text-ink-200 disabled:opacity-30">↓</button>
                   <button onClick={() => removeStep(i)} className="text-xs text-ink-400 hover:text-red-400">✕</button>
@@ -241,6 +275,13 @@ export function PlaybookEditor() {
           })}
         </div>
       </div>
+      </div>
+
+      {debugOpen && (
+        <div className="w-[30rem] shrink-0 border-l border-ink-800 p-3 h-full">
+          <PlaybookDebugPanel ref={debugRef} draft={form} />
+        </div>
+      )}
     </div>
   );
 }

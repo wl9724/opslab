@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid';
 import { playbooksRepo, commandsRepo, ensureLocalConnection, executionsRepo } from '../db.js';
 import { startRun, stopRun, subscribe, readOutput, RunnerError } from './runner.js';
+import { createLogger } from '../log.js';
 import type {
   Playbook,
   PlaybookRun,
@@ -21,6 +22,8 @@ type PlaybookListener = (ev: PlaybookEvent) => void;
 const runs = new Map<string, PlaybookRun>();
 const listeners = new Map<string, Set<PlaybookListener>>();
 const aborts = new Map<string, boolean>();
+
+const log = createLogger('playbook');
 
 export function subscribePlaybook(playbookRunId: string, fn: PlaybookListener): () => void {
   let set = listeners.get(playbookRunId);
@@ -59,6 +62,7 @@ export function getPlaybookRun(id: string): PlaybookRun | undefined {
 
 export function abortPlaybook(playbookRunId: string): boolean {
   if (!runs.has(playbookRunId)) return false;
+  log.info('Playbook 手动中止', { playbookRunId });
   aborts.set(playbookRunId, true);
   return true;
 }
@@ -106,6 +110,7 @@ export function startPlaybook(input: StartPlaybookInput): { playbookRunId: strin
     capturedVars: {},
   };
   runs.set(playbookRunId, run);
+  log.info('Playbook 开始', { playbookRunId, name, steps: steps.length });
 
   void executePlaybook(playbookRunId, steps, {
     defaultConnectionId: defaultConnectionId ?? localFallback.id,
@@ -275,6 +280,7 @@ async function executePlaybook(playbookRunId: string, steps: PlaybookStep[], ctx
   if (run.status === 'running') run.status = 'completed';
   run.endedAt = new Date().toISOString();
   run.capturedVars = capturedVars;
+  log[run.status === 'failed' ? 'warn' : 'info']('Playbook 结束', { playbookRunId, status: run.status });
   emit(playbookRunId, { type: 'done', playbookRunId, status: run.status, capturedVars });
 
   // Keep run for 1 hour for late subscribers, then GC

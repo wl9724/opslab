@@ -14,6 +14,8 @@ import { runRouter } from './routes/run.js';
 import { aiRouter } from './routes/ai.js';
 import { playbooksRouter } from './routes/playbooks.js';
 import { backupRouter } from './routes/backup.js';
+import { debugRouter, registerDebugStateProvider } from './routes/debug.js';
+import { createLogger, onLog } from './log.js';
 import { subscribe } from './executors/runner.js';
 import { subscribePlaybook } from './executors/playbookRunner.js';
 import {
@@ -31,12 +33,29 @@ import { seedIfEmpty } from './seed.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const log = createLogger('http');
+const slog = createLogger('socket');
+
 ensureLocalConnection();
 seedIfEmpty();
 
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '16mb' }));
+
+// Request log. Skips /api/health and /api/debug/* — the 调试 page polls those and
+// would otherwise flood the very buffer it is displaying.
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/') || req.path === '/api/health' || req.path.startsWith('/api/debug')) {
+    return next();
+  }
+  const start = Date.now();
+  res.on('finish', () => {
+    const level = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'debug';
+    log[level](`${req.method} ${req.path} → ${res.statusCode}`, { durationMs: Date.now() - start });
+  });
+  next();
+});
 
 app.use((req, res, next) => {
   if (req.path === '/api/health') return next();
@@ -56,6 +75,7 @@ app.use('/api/run', runRouter);
 app.use('/api/ai', aiRouter);
 app.use('/api/playbooks', playbooksRouter);
 app.use('/api/backup', backupRouter);
+app.use('/api/debug', debugRouter);
 
 const clientDist = path.join(ROOT_DIR, 'client', 'dist');
 if (fs.existsSync(clientDist)) {
@@ -75,9 +95,14 @@ io.use((socket, next) => {
   next();
 });
 
+registerDebugStateProvider(() => ({ socketClients: io.engine.clientsCount }));
+
 io.on('connection', (socket) => {
+  slog.debug('客户端连接', { socketId: socket.id, transport: socket.conn.transport.name });
   const unsubMap = new Map<string, () => void>();
   const playbookUnsubMap = new Map<string, () => void>();
+  // Live debug-log stream for the 调试 page. One subscription per socket, idempotent.
+  let debugLogUnsub: (() => void) | null = null;
   // Interactive terminal sessions this socket currently owns. The sessions themselves live in the
   // terminalRegistry (decoupled from the socket) so they survive a disconnect; here we just track
   // which ids to detach when this socket goes away.
@@ -113,6 +138,15 @@ io.on('connection', (socket) => {
       u();
       playbookUnsubMap.delete(payload.playbookRunId);
     }
+  });
+
+  socket.on('debug-subscribe', () => {
+    if (debugLogUnsub) return;
+    debugLogUnsub = onLog((entry) => socket.emit('debug-log', entry));
+  });
+  socket.on('debug-unsubscribe', () => {
+    debugLogUnsub?.();
+    debugLogUnsub = null;
   });
 
   // --- Interactive Web Terminal ---
@@ -159,11 +193,14 @@ io.on('connection', (socket) => {
     closeSession(payload.sessionId);
   });
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', (reason) => {
+    slog.debug('客户端断开', { socketId: socket.id, reason });
     for (const u of unsubMap.values()) u();
     unsubMap.clear();
     for (const u of playbookUnsubMap.values()) u();
     playbookUnsubMap.clear();
+    debugLogUnsub?.();
+    debugLogUnsub = null;
     // Don't kill the PTYs — detach them so a reconnecting client can re-attach within the grace window.
     for (const id of attachedTerms) detachSession(id, socket.id);
     attachedTerms.clear();
@@ -171,6 +208,9 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, HOST, () => {
+  // Banner goes straight to console (it contains the access-token URL, which must
+  // NOT enter the debug log buffer shown in the browser).
+  createLogger('system').info('OpsLab 服务已启动', { host: HOST, port: PORT, node: process.version });
   console.log('');
   console.log('  OpsLab 0.1.1  (escape-strip=v2, bash=--norc --noprofile)');
   console.log(`  → ${APP_URL}`);

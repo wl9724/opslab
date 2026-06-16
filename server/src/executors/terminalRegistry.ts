@@ -1,5 +1,8 @@
 import { openTerminal, type TermSession } from './pty.js';
 import type { Connection } from '../types.js';
+import { createLogger } from '../log.js';
+
+const log = createLogger('term');
 
 /**
  * Registry of live interactive terminal sessions, decoupled from any single socket.
@@ -82,6 +85,7 @@ function appendOutput(e: Entry, data: string): void {
 function markExit(e: Entry, code: number | null): void {
   e.exited = true;
   e.exitCode = code;
+  log.info('终端会话退出', { sessionId: e.id, exitCode: code });
   e.sink?.exit(code);
 }
 
@@ -116,6 +120,11 @@ export async function openSession(
     sink,
   };
   sessions.set(sessionId, e);
+  log.info('终端会话打开', {
+    sessionId,
+    connection: `${connection.name} (${connection.type})`,
+    size: `${cols}x${rows}`,
+  });
 
   const session = await openTerminal({
     connection,
@@ -150,8 +159,12 @@ export function attachSession(
   rows: number,
 ): boolean {
   const e = sessions.get(sessionId);
-  if (!e) return false;
+  if (!e) {
+    log.debug('终端重连失败：会话不存在', { sessionId, lastSeq });
+    return false;
+  }
 
+  log.debug('终端会话重连', { sessionId, lastSeq, total: e.total });
   if (e.grace) {
     clearTimeout(e.grace);
     e.grace = undefined;
@@ -196,7 +209,11 @@ export function detachSession(sessionId: string, tag: string): void {
     closeSession(sessionId);
     return;
   }
-  e.grace = setTimeout(() => closeSession(sessionId), GRACE_MS);
+  log.debug('终端会话挂起，等待重连', { sessionId, graceMs: GRACE_MS });
+  e.grace = setTimeout(() => {
+    log.info('终端会话保活超时，销毁', { sessionId });
+    closeSession(sessionId);
+  }, GRACE_MS);
 }
 
 export function inputSession(sessionId: string, data: string): void {
@@ -217,9 +234,27 @@ export function closeSession(sessionId: string): void {
   if (!e) return;
   if (e.grace) clearTimeout(e.grace);
   sessions.delete(sessionId);
+  log.debug('终端会话关闭', { sessionId });
   try {
     e.session.kill();
   } catch {
     /* swallow */
   }
+}
+
+/** Snapshot of live sessions for the debug state panel. */
+export function listSessionsInfo(): Array<{
+  id: string;
+  size: string;
+  attached: boolean;
+  exited: boolean;
+  bufferedBytes: number;
+}> {
+  return [...sessions.values()].map((e) => ({
+    id: e.id,
+    size: `${e.cols}x${e.rows}`,
+    attached: e.sink !== null,
+    exited: e.exited,
+    bufferedBytes: e.buffered,
+  }));
 }
