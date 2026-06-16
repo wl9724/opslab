@@ -13,6 +13,7 @@ import { executionsRouter } from './routes/executions.js';
 import { runRouter } from './routes/run.js';
 import { aiRouter } from './routes/ai.js';
 import { playbooksRouter } from './routes/playbooks.js';
+import { backupRouter } from './routes/backup.js';
 import { debugRouter, registerDebugStateProvider } from './routes/debug.js';
 import { createLogger, onLog } from './log.js';
 import { subscribe } from './executors/runner.js';
@@ -40,7 +41,7 @@ seedIfEmpty();
 
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '16mb' }));
 
 // Request log. Skips /api/health and /api/debug/* — the 调试 page polls those and
 // would otherwise flood the very buffer it is displaying.
@@ -73,6 +74,7 @@ app.use('/api/executions', executionsRouter);
 app.use('/api/run', runRouter);
 app.use('/api/ai', aiRouter);
 app.use('/api/playbooks', playbooksRouter);
+app.use('/api/backup', backupRouter);
 app.use('/api/debug', debugRouter);
 
 const clientDist = path.join(ROOT_DIR, 'client', 'dist');

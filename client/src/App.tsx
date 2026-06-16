@@ -20,7 +20,7 @@ const NAV = [
   { to: '/playbooks', label: 'Playbook', icon: '⛓' },
   { to: '/connections', label: '连接', icon: '⇄' },
   { to: '/history', label: '历史', icon: '⌛' },
-  { to: '/settings', label: 'AI 设置', icon: '✦' },
+  { to: '/settings', label: '设置', icon: '✦' },
   { to: '/debug', label: '调试', icon: '⌬' },
 ];
 

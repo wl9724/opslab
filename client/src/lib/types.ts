@@ -90,6 +90,26 @@ export interface Playbook {
   updatedAt: string;
 }
 
+export interface BackupFile {
+  opslab: 'backup';
+  version: number;
+  exportedAt: string;
+  includesSecrets: boolean;
+  data: {
+    commands: CommandTemplate[];
+    connections: Array<Connection & { hasSecret: boolean }>;
+    playbooks: Playbook[];
+    providers: Array<AIProvider & { hasSecret: boolean }>;
+  };
+}
+
+export interface ImportSummary {
+  mode: 'merge' | 'replace';
+  imported: { commands: number; connections: number; playbooks: number; providers: number };
+  secretsRestored: number;
+  skipped: number;
+}
+
 export type PlaybookEvent =
   | { type: 'step-start'; playbookRunId: string; index: number; executionId: string; renderedCmd: string }
   | { type: 'chunk'; playbookRunId: string; index: number; executionId: string; stream: 'stdout' | 'stderr'; data: string }
